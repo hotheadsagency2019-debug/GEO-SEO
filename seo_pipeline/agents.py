@@ -1,11 +1,13 @@
 """
-Nine specialized SEO agents.  Each agent:
+Nine specialized SEO/GEO agents for HotHeads Band blog (hot-head.ru).
+
+Each agent:
   - receives a PipelineContext with all upstream results
   - calls Claude claude-opus-4-6 with adaptive thinking + streaming
   - returns a structured Pydantic model
   - updates the PipelineContext in place
 
-All agents share one Anthropic client passed in at construction time.
+Output: Tilda Zero Block-compatible HTML with HotHeads Band branding.
 """
 from __future__ import annotations
 
@@ -16,16 +18,21 @@ from typing import Any, Dict, Optional, Type, TypeVar
 import anthropic
 from pydantic import BaseModel
 
+from .brand_config import (
+    AVAILABLE_CLASSES,
+    CONTENT_RULES,
+    GEO_CONTENT_RULES,
+    HTML_CLOSE,
+    HTML_OPEN,
+)
 from .models import (
     DraftArticle,
     EditedArticle,
-    ExampleItem,
     FactData,
     FactItem,
     HTMLArticle,
     InternalLink,
     KeywordAnalysis,
-    KeywordRow,
     LinkData,
     LinkedHTMLArticle,
     LSIData,
@@ -33,6 +40,7 @@ from .models import (
     QAChecklistItem,
     QAReport,
     StatItem,
+    ExampleItem,
 )
 
 MODEL = "claude-opus-4-6"
@@ -57,10 +65,8 @@ def _stream_call(client: anthropic.Anthropic, system: str, user: str) -> str:
 
 def _parse_json_response(raw: str) -> Dict[str, Any]:
     """Extract the first JSON object or array from the model output."""
-    # strip markdown fences if present
     raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
     raw = re.sub(r"\s*```$", "", raw.strip(), flags=re.MULTILINE)
-    # find first { or [
     start = min(
         (raw.find("{") if raw.find("{") != -1 else len(raw)),
         (raw.find("[") if raw.find("[") != -1 else len(raw)),
@@ -75,14 +81,10 @@ def _call_structured(
     user: str,
     model_cls: Type[T],
 ) -> T:
-    """
-    Call Claude and parse the response as a Pydantic model.
-    The system prompt instructs the model to reply with JSON only.
-    """
     system_with_json = (
         system
-        + "\n\nIMPORTANT: Your entire response MUST be valid JSON that matches "
-        "the schema described. Do not add any text before or after the JSON object."
+        + "\n\nIMPORTANT: Your entire response MUST be valid JSON matching the schema "
+        "described. Do not add any text before or after the JSON object."
     )
     raw = _stream_call(client, system_with_json, user)
     data = _parse_json_response(raw)
@@ -91,25 +93,29 @@ def _call_structured(
 
 # ─── Agent 1: Keyword Analyzer ────────────────────────────────────────────────
 
-SYSTEM_KEYWORD_ANALYZER = """You are a senior SEO strategist and content architect.
-Your task is to analyse a keyword cluster and produce a complete article structure.
+SYSTEM_KEYWORD_ANALYZER = f"""You are a senior SEO strategist and content architect for HotHeads Band agency (hot-head.ru).
+Analyse a keyword cluster and produce a complete article structure.
 
-Given:
-- main_keyword: the primary search term
-- cluster_keywords: related terms
-- search_intent: the type of search intent
-- page_type: the type of page
+{CONTENT_RULES}
 
-Produce a JSON object with:
-{
-  "title": "SEO title (max 60 chars, includes main keyword)",
-  "h1": "H1 heading (close to main keyword, compelling)",
-  "h2_sections": ["Section 1", "Section 2", ...],  // 5-8 sections
-  "primary_keywords": ["kw1", "kw2", ...],         // 3-5 keywords
-  "secondary_keywords": ["kw1", ...],              // 5-15 keywords
-  "meta_description": "Meta description (max 160 chars)",
-  "intent": "refined intent label"
-}"""
+SEO Title rules:
+- Max 60 chars, include main keyword
+- For GEO articles: include year (2026), word «Лучшие» / «Лучший», max 70 chars
+
+H2 rules: every H2 MUST contain a search keyword. No generic headings.
+❌ «Введение» → ✅ «Введение в Telegram Ads 2026: как это работает»
+
+Return JSON:
+{{
+  "title": "SEO title (max 60 chars for SEO, 70 for GEO)",
+  "h1": "H1 heading — includes main keyword",
+  "h2_sections": ["Section with keyword 1", "Section with keyword 2", ...],
+  "primary_keywords": ["kw1", "kw2"],
+  "secondary_keywords": ["kw1", ...],
+  "meta_description": "150-160 chars with keywords",
+  "intent": "refined intent label",
+  "article_tag": "short category tag (e.g. Контекстная реклама)"
+}}"""
 
 
 def agent_keyword_analyzer(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
@@ -119,6 +125,9 @@ main_keyword: {row.main_keyword}
 cluster_keywords: {row.cluster_keywords}
 search_intent: {row.search_intent}
 page_type: {row.page_type}
+article_type: {row.article_type}
+
+{"GEO article: title must contain year 2026 and word «Лучшие» / «Best». 5-8 H2 sections — each a product or comparison angle." if row.is_geo else "SEO article: 5-7 H2 sections covering the topic comprehensively."}
 
 Produce the article structure JSON."""
     ctx.keyword_analysis = _call_structured(client, SYSTEM_KEYWORD_ANALYZER, user, KeywordAnalysis)
@@ -127,97 +136,134 @@ Produce the article structure JSON."""
 
 # ─── Agent 2: LSI & Semantic Expansion ───────────────────────────────────────
 
-SYSTEM_LSI_EXPANSION = """You are an expert in semantic SEO, NLP, and topical authority.
-Your task is to expand a keyword topic with LSI terms, entities, and user questions.
+SYSTEM_LSI_EXPANSION = f"""You are an expert in semantic SEO and topical authority for Russian digital marketing content.
+Expand a keyword topic with LSI terms, entities, and user questions.
 
-Simulate what you would find in:
-- Top-10 Google/Yandex results
-- "People Also Ask" boxes
-- Related searches
-- N-gram analysis of top pages
+{CONTENT_RULES}
 
-Produce a JSON object with:
-{
-  "lsi_keywords": ["term1", "term2", ...],         // 20-30 LSI terms
-  "entities": ["Entity1", "Entity2", ...],         // named entities & concepts
-  "user_questions": ["Question 1?", ...],          // 10-15 PAA questions
-  "related_topics": ["Topic 1", ...]               // 5-10 broader/narrower topics
-}"""
+Simulate data from: top-10 Yandex/Google results, «Люди также спрашивают», related searches.
+
+ЗАПРЕЩЕНО упоминать: Meta, Facebook, Instagram, Threads, WhatsApp.
+Используй вместо них: VK Реклама, Яндекс Директ, Telegram Ads, MyTarget, ВКонтакте.
+
+Return JSON:
+{{
+  "lsi_keywords": ["term1", ...],        // 20-30 LSI terms
+  "entities": ["Entity1", ...],          // named entities & concepts
+  "user_questions": ["Question 1?", ...], // 10-15 questions (good for FAQ)
+  "related_topics": ["Topic 1", ...]     // 5-10 broader/narrower topics
+}}"""
 
 
 def agent_lsi_expansion(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
     ka = ctx.keyword_analysis
-    user = f"""Topic to expand:
-main_keyword: {ctx.row.main_keyword}
-article_title: {ka.title}
-h2_sections: {', '.join(ka.h2_sections)}
-primary_keywords: {', '.join(ka.primary_keywords)}
+    user = f"""Topic: {ctx.row.main_keyword}
+Article title: {ka.title}
+H2 sections: {', '.join(ka.h2_sections)}
+Primary keywords: {', '.join(ka.primary_keywords)}
+Article type: {ctx.row.article_type}
 
-Generate LSI, entities, user questions and related topics."""
+Generate LSI keywords, entities, user questions and related topics."""
     ctx.lsi_data = _call_structured(client, SYSTEM_LSI_EXPANSION, user, LSIData)
     return ctx
 
 
 # ─── Agent 3: Fact Collector ──────────────────────────────────────────────────
 
-SYSTEM_FACT_COLLECTOR = """You are an expert research journalist and fact-checker.
-Your task is to collect real, verifiable facts, statistics, and case studies for an SEO article.
+SYSTEM_FACT_COLLECTOR = f"""You are an expert research journalist for HotHeads Band agency.
+Collect real, verifiable facts, statistics, and case studies for an SEO/GEO article.
 
-Sources to simulate: research papers, industry reports, official docs, expert analyses.
+{CONTENT_RULES}
 
-Produce a JSON object with:
-{
-  "facts": [
-    {"text": "fact text", "source": "Source name or URL"}
-  ],
-  "statistics": [
-    {"value": "42%", "context": "explanation", "source": "Source"}
-  ],
-  "examples": [
-    {"title": "Example title", "description": "Brief description"}
-  ],
-  "sources": ["Source 1", "Source 2", ...]
-}
+Focus on Russian market data: ruble prices, Russian platforms, RU-market statistics.
+Sources to simulate: industry reports, official docs, expert analyses, agency case studies.
 
-Include at least 5 facts, 4 statistics, 3 examples."""
+Return JSON:
+{{
+  "facts": [{{"text": "fact", "source": "source name"}}],
+  "statistics": [{{"value": "42%", "context": "explanation", "source": "Source"}}],
+  "examples": [{{"title": "Case title", "description": "Brief description"}}],
+  "sources": ["Source 1", ...]
+}}
+
+Include min 5 facts, 4 statistics, 3 examples. Prices in rubles where relevant."""
 
 
 def agent_fact_collector(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
     ka = ctx.keyword_analysis
     lsi = ctx.lsi_data
-    user = f"""Collect facts for an article about: {ctx.row.main_keyword}
-
-Article structure:
-{chr(10).join(f'- {s}' for s in ka.h2_sections)}
-
-Key entities to cover: {', '.join(lsi.entities[:10])}
+    user = f"""Collect facts for article: {ctx.row.main_keyword}
+Article type: {ctx.row.article_type}
+Structure: {chr(10).join(f'- {s}' for s in ka.h2_sections)}
+Key entities: {', '.join(lsi.entities[:10])}
 User questions to answer: {chr(10).join(lsi.user_questions[:5])}
 
-Provide facts, statistics, examples and sources."""
+Provide facts, statistics, examples and sources. Russian market focus."""
     ctx.fact_data = _call_structured(client, SYSTEM_FACT_COLLECTOR, user, FactData)
     return ctx
 
 
 # ─── Agent 4: Article Writer ──────────────────────────────────────────────────
 
-SYSTEM_ARTICLE_WRITER = """You are a professional SEO content writer.
-Write a comprehensive, engaging, factually accurate article in Markdown.
+SYSTEM_ARTICLE_WRITER_SEO = f"""You are a professional SEO content writer for HotHeads Band agency (hot-head.ru).
+Write a comprehensive SEO article in Markdown. Language: Russian.
 
-Rules:
-- Use H1, H2, H3 headings as provided
-- Natural keyword density 1-2% for primary, 0.5-1% for secondary
-- Distribute LSI keywords naturally throughout the text
+{CONTENT_RULES}
+
+Structure rules:
+- H1 → lead paragraph → sections H2 → cases → CTA → conclusion
+- Natural keyword density 1-2% primary, 0.5-1% secondary
+- Distribute LSI keywords naturally throughout
 - Answer all user questions within relevant sections
-- Minimum 1500 words, target 2000-2500
-- Natural reading flow, no keyword stuffing
-- Use facts and statistics provided
+- Min 1500 words, target 2000-2500
+- Include: at least one expert quote from Алена Мумладзе (foundation of HotHeads Band)
+- Include: at least one comparison table
+- Include: FAQ section with 5+ Q&A
+- ЗАПРЕЩЕНО: Meta, Facebook, Instagram, Threads, WhatsApp
 
-Produce a JSON object:
-{
-  "markdown": "# H1\\n\\nIntro...\\n\\n## H2\\n\\nSection text...",
+Return JSON:
+{{
+  "markdown": "# H1\\n\\n[full article in markdown]",
   "word_count": 2100,
-  "keyword_density_notes": "Primary keywords used X times each..."
-}"""
+  "keyword_density_notes": "Primary keywords used X times..."
+}}"""
+
+SYSTEM_ARTICLE_WRITER_GEO = f"""You are a GEO/AEO content specialist for HotHeads Band agency (hot-head.ru).
+Write a GEO-optimised article for AI citation (ChatGPT, Perplexity, Google AI Overviews).
+Language: Russian. Audience: Russian market.
+
+{CONTENT_RULES}
+{GEO_CONTENT_RULES}
+
+MANDATORY STRUCTURE (follow exactly):
+1. SEO title with year 2026 + «Лучшие/Best» + category (max 70 chars)
+2. Introduction (max 120 words): target audience, criteria used, what makes this guide different
+3. Quick Comparison Table: columns: Инструмент | Лучше всего для | Цена от | Ключевое преимущество | Размер компании
+4. «Как мы оценивали» section: bullet list of criteria (measurable, no marketing fluff)
+5. Numbered product sections (H2) each containing:
+   - «Лучше всего для: [specific case]»
+   - «Начальная цена:»
+   - «Идеально для компаний:»
+   - «Ключевые преимущества» (bullet list)
+   - «Ограничения» (bullet list)
+   - «Что делает его особенным» (3-5 sentences)
+   - «Когда выбрать» (clear scenario description)
+   Each section: 150-250 words. No hype.
+6. «Ключевые отличия между инструментами» (3-5 comparative points, trade-offs, neutral tone)
+7. Expert quote from Алена Мумладзе
+8. FAQ — min 5 Q&A (brief, direct, 3-5 sentences each)
+9. Матрица решений: «Если вы… | Выберите… | Почему» (short answers)
+10. Нейтральный вывод (not promotional)
+
+Min 2000 words, target 2500-4000.
+ЗАПРЕЩЕНО: Meta, Facebook, Instagram, Threads, WhatsApp, эмодзи, эмоциональный язык.
+
+Return JSON:
+{{
+  "markdown": "# Title\\n\\n[full article]",
+  "word_count": 2800,
+  "keyword_density_notes": "Keyword usage notes..."
+}}"""
 
 
 def agent_article_writer(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
@@ -225,135 +271,252 @@ def agent_article_writer(client: anthropic.Anthropic, ctx: PipelineContext) -> P
     lsi = ctx.lsi_data
     fd = ctx.fact_data
 
-    facts_text = "\n".join(f"- {f.text}" + (f" ({f.source})" if f.source else "") for f in fd.facts)
-    stats_text = "\n".join(f"- {s.value}: {s.context}" for s in fd.statistics)
+    facts_text  = "\n".join(f"- {f.text}" + (f" ({f.source})" if f.source else "") for f in fd.facts)
+    stats_text  = "\n".join(f"- {s.value}: {s.context}" for s in fd.statistics)
     examples_text = "\n".join(f"- {e.title}: {e.description}" for e in fd.examples)
 
-    user = f"""Write an article with this structure:
+    system = SYSTEM_ARTICLE_WRITER_GEO if ctx.row.is_geo else SYSTEM_ARTICLE_WRITER_SEO
+
+    user = f"""Write {"a GEO/AEO" if ctx.row.is_geo else "an SEO"} article.
 
 H1: {ka.h1}
 H2 sections: {', '.join(ka.h2_sections)}
+Primary keywords (density 1-2%): {', '.join(ka.primary_keywords)}
+Secondary keywords (density 0.5-1%): {', '.join(ka.secondary_keywords)}
+LSI keywords: {', '.join(lsi.lsi_keywords[:20])}
 
-PRIMARY KEYWORDS (density 1-2%): {', '.join(ka.primary_keywords)}
-SECONDARY KEYWORDS (density 0.5-1%): {', '.join(ka.secondary_keywords)}
-LSI KEYWORDS (weave naturally): {', '.join(lsi.lsi_keywords[:20])}
-
-USER QUESTIONS TO ANSWER:
+User questions for FAQ:
 {chr(10).join(f'- {q}' for q in lsi.user_questions)}
 
-FACTS TO USE:
+Facts:
 {facts_text}
 
-STATISTICS TO USE:
+Statistics:
 {stats_text}
 
-EXAMPLES TO USE:
+Examples:
 {examples_text}
 
-Write the full article markdown, then return JSON."""
-    ctx.draft_article = _call_structured(client, SYSTEM_ARTICLE_WRITER, user, DraftArticle)
+{"PRODUCTS TO COMPARE: " + ctx.row.cluster_keywords if ctx.row.is_geo else ""}
+
+Expert quote: include a realistic quote from Алена Мумладзе (основательница HotHeads Band) relevant to the topic."""
+    ctx.draft_article = _call_structured(client, system, user, DraftArticle)
     return ctx
 
 
 # ─── Agent 5: SEO Editor ──────────────────────────────────────────────────────
 
-SYSTEM_SEO_EDITOR = """You are a senior SEO editor. Your task is to improve a draft article:
+SYSTEM_SEO_EDITOR_SEO = f"""You are a senior SEO editor for HotHeads Band agency (hot-head.ru).
+Edit and enhance the draft article. Language: Russian.
 
-1. Check and fix keyword over-optimisation (keyword stuffing)
-2. Improve readability: shorter paragraphs, varied sentence length
-3. Verify keyword distribution is even across sections
-4. Add a FAQ block at the end (5-7 Q&A pairs from user questions)
-5. Add at least one comparison table where relevant
-6. Add bullet/numbered lists where appropriate
-7. Add a conclusion section
-8. Ensure the article starts with a compelling intro hook
+{CONTENT_RULES}
 
-Produce a JSON object:
-{
+Editing checklist:
+1. Every H2/H3 MUST contain a search keyword — rewrite any that don't
+2. Fix keyword over-optimisation (stuffing)
+3. Improve readability: short paragraphs, varied sentence length
+4. Verify keyword distribution across all sections
+5. Add/improve FAQ block at the end (min 5 Q&A from user questions)
+6. Add at least one comparison table if missing
+7. Add bullet/numbered lists where appropriate
+8. Add conclusion section if missing
+9. Ensure compelling intro hook in first paragraph
+10. Add expert quote from Алена Мумладзе if missing
+11. ЗАПРЕЩЕНО: Meta, Facebook, Instagram, Threads, WhatsApp
+12. Callout blocks only: .callout-warn (orange) and .callout-tip (grey)
+
+Return JSON:
+{{
   "markdown": "...improved full article with FAQ...",
   "readability_score": "Good / Needs improvement",
-  "seo_notes": ["improvement 1", "improvement 2", ...],
+  "seo_notes": ["improvement 1", ...],
   "word_count": 2300
-}"""
+}}"""
+
+SYSTEM_SEO_EDITOR_GEO = f"""You are a senior GEO/AEO editor for HotHeads Band agency (hot-head.ru).
+Edit the GEO article for maximum AI citability. Language: Russian.
+
+{CONTENT_RULES}
+{GEO_CONTENT_RULES}
+
+GEO editing checklist:
+1. Every H2/H3 MUST contain a search keyword
+2. Introduction ≤120 words — cut ruthlessly
+3. Quick Comparison Table present with all 5 columns
+4. Each product section has: «Лучше всего для», «Начальная цена», bullet Плюсы/Минусы, «Когда выбрать»
+5. «Ключевые отличия» section with clear trade-offs
+6. FAQ: min 5 Q&A, answers 3-5 sentences, direct and factual
+7. Матрица решений: «Если вы… | Выберите… | Почему» table
+8. Expert quote from Алена Мумладзе
+9. Neutral conclusion (no promotional language)
+10. No hype words: революционный, game-changing, лучший в своём классе
+11. ЗАПРЕЩЕНО: Meta, Facebook, Instagram, Threads, WhatsApp
+
+Return JSON:
+{{
+  "markdown": "...improved GEO article...",
+  "readability_score": "Analytical / Structured",
+  "seo_notes": ["improvement 1", ...],
+  "word_count": 2800
+}}"""
 
 
 def agent_seo_editor(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
     ka = ctx.keyword_analysis
     lsi = ctx.lsi_data
     da = ctx.draft_article
+    system = SYSTEM_SEO_EDITOR_GEO if ctx.row.is_geo else SYSTEM_SEO_EDITOR_SEO
 
-    user = f"""Edit and improve this article draft.
+    user = f"""Edit this {"GEO/AEO" if ctx.row.is_geo else "SEO"} article draft.
 
 Primary keywords: {', '.join(ka.primary_keywords)}
 User questions for FAQ: {chr(10).join(lsi.user_questions)}
 
-DRAFT ARTICLE:
-{da.markdown}
-
-Improve readability, SEO, add FAQ and enhancements."""
-    ctx.edited_article = _call_structured(client, SYSTEM_SEO_EDITOR, user, EditedArticle)
+DRAFT:
+{da.markdown}"""
+    ctx.edited_article = _call_structured(client, system, user, EditedArticle)
     return ctx
 
 
 # ─── Agent 6: HTML Formatter ──────────────────────────────────────────────────
+# CSS is NEVER generated by the model — it is injected verbatim from brand_config.py.
+# Claude generates ONLY the inner HTML content (no <style> tag, no wrappers).
 
-SYSTEM_HTML_FORMATTER = """You are a front-end developer specialising in CMS content.
-Convert the Markdown article to clean, semantic HTML.
+SYSTEM_HTML_FORMATTER = f"""You are a front-end developer for HotHeads Band agency (hot-head.ru).
+Convert a Markdown article into the INNER HTML content for a Tilda Zero Block.
 
-Rules:
-- Use proper heading tags: <h1>, <h2>, <h3>
-- Paragraphs in <p> tags
-- Lists as <ul><li> or <ol><li>
-- Tables as proper <table><thead><tbody>
-- FAQ section: use <div class="faq-item"><h3 class="faq-question">, <p class="faq-answer">
-- Add id attributes to H2 headings (slugified title)
-- Do NOT include <html>, <head>, <body> tags
-- Wrap the whole article in <article class="seo-article">
+{CONTENT_RULES}
 
-Produce a JSON object:
-{
-  "html": "<article class=\\"seo-article\\">...</article>",
-  "cms_notes": "Paste into the content area of your CMS..."
-}"""
+YOUR OUTPUT MUST BE ONLY the content that goes INSIDE:
+  <div class="hu-article"><div class="container">  ← already provided
+    [YOUR HTML HERE]
+  </div></div>                                       ← already provided
+
+DO NOT output:
+  - <style> tags or any CSS
+  - <html>, <head>, <body>, <meta>, <script>
+  - The .hu-article or .container wrapper divs (already added automatically)
+
+USE ONLY these CSS classes (all styles are pre-defined):
+{AVAILABLE_CLASSES}
+
+COMPONENT TEMPLATES:
+
+Article header (REQUIRED):
+<header class="article-header">
+  <span class="article-tag">{{tag}}</span>
+  <h1>{{h1 with primary keyword}}</h1>
+  <div class="article-meta">
+    <span>📅 {{Месяц YYYY}}</span>
+    <span>⏱ {{X}} минут чтения</span>
+    <span>✍ <a href="https://t.me/hotheads_band" target="_blank">Агентство HotHeads Band</a></span>
+  </div>
+</header>
+
+Lead: <p class="lead">…</p>
+
+TOC (REQUIRED — ids must match H2 id attributes):
+<nav class="toc" aria-label="Содержание">
+  <h2>Содержание</h2>
+  <ol><li><a href="#section-slug">Section title</a></li></ol>
+</nav>
+
+H2 headings: <h2 id="section-slug">Title with keyword</h2>
+
+Stats: <div class="stats-grid"><div class="stat-card"><span class="stat-number">X</span><span class="stat-label">label</span></div></div>
+
+Callouts (ONLY these two):
+<div class="callout callout-warn"><strong>Title</strong>Text</div>
+<div class="callout callout-tip"><strong>Title</strong>Text</div>
+
+Expert quote (REQUIRED — Алена Мумладзе):
+<div class="expert-quote">
+  <blockquote>Quote text.</blockquote>
+  <cite><strong>Алена Мумладзе</strong> — основательница агентства HotHeads Band</cite>
+</div>
+
+Tables: <div class="table-wrap"><table><thead><tr><th>Col</th></tr></thead><tbody><tr><td>Data</td></tr></tbody></table></div>
+
+FAQ (REQUIRED — min 5 items):
+<div class="faq-item"><p class="faq-q">Question?</p><p class="faq-a">Answer.</p></div>
+
+CTA (REQUIRED at the end):
+<div class="cta-block">
+  <div class="cta-text">
+    <p class="cta-title">Title</p>
+    <p class="cta-body">Description.</p>
+  </div>
+  <a href="https://t.me/hotheads_band" target="_blank" class="cta-btn">Обсудить проект →</a>
+</div>
+
+Footer: <footer class="article-footer">…</footer>
+
+FORBIDDEN:
+- <style>, inline style="" attributes, or any CSS
+- Meta, Facebook, Instagram, Threads, WhatsApp mentions
+- Any classes not listed above
+
+Return JSON:
+{{
+  "html": "<header class=\\"article-header\\">...</header>\\n...\\n<div class=\\"cta-block\\">...</div>",
+  "cms_notes": "Paste into Zero Block. Set height to Авто in Tilda settings."
+}}"""
 
 
 def agent_html_formatter(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
-    ea = ctx.edited_article
-    user = f"""Convert this Markdown article to semantic HTML:
+    import datetime
+    month_ru = ["Январь","Февраль","Март","Апрель","Май","Июнь",
+                "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
+    now = datetime.datetime.now()
+    date_str = f"{month_ru[now.month - 1]} {now.year}"
 
+    ka  = ctx.keyword_analysis
+    ea  = ctx.edited_article
+    tag = getattr(ka, "article_tag", ctx.row.page_type)
+
+    user = f"""Convert to inner HTML content for Tilda Zero Block.
+
+Article tag: {tag}
+Date for article-meta: {date_str}
+Primary keywords: {', '.join(ka.primary_keywords)}
+Article type: {ctx.row.article_type}
+
+MARKDOWN:
 {ea.markdown}
 
-Follow the HTML formatting rules exactly."""
-    ctx.html_article = _call_structured(client, SYSTEM_HTML_FORMATTER, user, HTMLArticle)
+Generate ONLY the inner HTML content. No <style>, no wrappers.
+Use ONLY the pre-defined CSS classes. The <style> block with all CSS is added automatically."""
+
+    # Ask Claude for inner content only
+    inner = _call_structured(client, SYSTEM_HTML_FORMATTER, user, HTMLArticle)
+
+    # Inject the canonical CSS wrapper — never trust Claude's CSS output
+    full_html = HTML_OPEN + inner.html + HTML_CLOSE
+    ctx.html_article = HTMLArticle(html=full_html, cms_notes=inner.cms_notes)
     return ctx
 
 
 # ─── Agent 7: Internal Linking Analyzer ──────────────────────────────────────
 
-SYSTEM_INTERNAL_LINKER = """You are an SEO internal linking specialist.
-You analyse a site's pages and find the best internal linking opportunities for a new article.
+SYSTEM_INTERNAL_LINKER = f"""You are an SEO internal linking specialist for HotHeads Band agency (hot-head.ru).
+Analyse site pages and find the best internal linking opportunities for a new article.
 
-Given a list of site pages (URL + title) and the new article's topic, use semantic similarity
-to identify 4-8 most relevant pages for internal links.
+{CONTENT_RULES}
 
-For each link provide:
+Use semantic similarity between the new article and existing pages.
+For each recommended link:
 - url: page URL
-- anchor: natural anchor text (NOT the exact title – vary it)
-- section: which H2 section of the new article to insert the link
+- anchor: natural anchor text (varied, not exact title copy)
+- section: which H2 of the new article to insert the link
 - relevance_score: 0.0-1.0
 
-Produce a JSON object:
-{
+Return JSON:
+{{
   "internal_links": [
-    {
-      "url": "/some-page/",
-      "anchor": "natural anchor text",
-      "section": "H2 section title",
-      "relevance_score": 0.85
-    }
+    {{"url": "/some/", "anchor": "natural anchor", "section": "H2 title", "relevance_score": 0.85}}
   ],
-  "sitemap_pages_analyzed": 42
-}"""
+  "sitemap_pages_analyzed": 10
+}}"""
 
 
 def agent_internal_linking(
@@ -361,128 +524,119 @@ def agent_internal_linking(
     ctx: PipelineContext,
     sitemap_pages: Optional[list] = None,
 ) -> PipelineContext:
-    """
-    sitemap_pages: list of dicts with 'url' and 'title'.
-    If not provided, a placeholder site map is used for demo purposes.
-    """
     ka = ctx.keyword_analysis
-    ea = ctx.edited_article
 
     if not sitemap_pages:
-        # Demo sitemap – replace with real sitemap.xml parser in production
         sitemap_pages = [
-            {"url": "/blog/seo-basics/", "title": "Основы SEO: полное руководство"},
-            {"url": "/blog/content-marketing/", "title": "Контент-маркетинг для бизнеса"},
-            {"url": "/blog/google-ads-guide/", "title": "Google Ads: пошаговый гайд"},
-            {"url": "/blog/yandex-direct/", "title": "Яндекс Директ: настройка и оптимизация"},
+            {"url": "/blog/seo-basics/",              "title": "Основы SEO: полное руководство"},
+            {"url": "/blog/content-marketing/",       "title": "Контент-маркетинг для бизнеса"},
+            {"url": "/blog/yandex-direct/",           "title": "Яндекс Директ: настройка и оптимизация"},
             {"url": "/blog/landing-page-conversion/", "title": "Лендинг: как повысить конверсию"},
-            {"url": "/blog/keyword-research/", "title": "Сбор семантики: инструменты и методы"},
-            {"url": "/blog/technical-seo/", "title": "Технический SEO-аудит сайта"},
-            {"url": "/blog/backlinks/", "title": "Ссылочная масса: как строить ссылки"},
-            {"url": "/blog/ai-tools-marketing/", "title": "ИИ-инструменты для маркетолога"},
-            {"url": "/blog/social-media-ads/", "title": "Реклама в соцсетях: Facebook и ВКонтакте"},
+            {"url": "/blog/keyword-research/",        "title": "Сбор семантики: инструменты и методы"},
+            {"url": "/blog/technical-seo/",           "title": "Технический SEO-аудит сайта"},
+            {"url": "/blog/backlinks/",               "title": "Ссылочная масса: как строить ссылки"},
+            {"url": "/blog/ai-tools-marketing/",      "title": "ИИ-инструменты для маркетолога"},
+            {"url": "/blog/telegram-marketing/",      "title": "Маркетинг в Telegram: каналы и боты"},
+            {"url": "/blog/analytics-setup/",         "title": "Настройка аналитики: GA4 и Яндекс Метрика"},
+            {"url": "/keisi/",                        "title": "Кейсы агентства HotHeads Band"},
         ]
 
     pages_text = "\n".join(f"- URL: {p['url']} | Title: {p['title']}" for p in sitemap_pages)
 
-    user = f"""New article topic: {ctx.row.main_keyword}
-Article title: {ka.h1}
-Article H2 sections: {', '.join(ka.h2_sections)}
+    user = f"""New article: {ctx.row.main_keyword}
+Article H1: {ka.h1}
+H2 sections: {', '.join(ka.h2_sections)}
 
-Site pages to analyse for internal links:
+Site pages:
 {pages_text}
 
-Find 4-8 most relevant internal linking opportunities."""
+Find 4-8 most relevant internal links. Prefer linking to /keisi/ when relevant (shows agency expertise)."""
     ctx.link_data = _call_structured(client, SYSTEM_INTERNAL_LINKER, user, LinkData)
-    # Fill in the analysed count
     ctx.link_data.sitemap_pages_analyzed = len(sitemap_pages)
     return ctx
 
 
 # ─── Agent 8: Link Inserter ───────────────────────────────────────────────────
 
-SYSTEM_LINK_INSERTER = """You are an HTML editor specialising in natural internal linking.
-Insert internal links into an HTML article at the most natural positions.
+SYSTEM_LINK_INSERTER = f"""You are an HTML editor for HotHeads Band agency (hot-head.ru).
+Insert internal links into the HTML article at natural positions.
+
+{CONTENT_RULES}
 
 Rules:
-- Insert links within paragraph text, not as standalone lines
-- The anchor text must appear naturally in the existing sentences
-  (rewrite surrounding text slightly if needed)
+- Insert links within paragraph text, NOT as standalone lines
+- Anchor text must appear naturally in the sentence (rewrite slightly if needed)
 - Each link must appear exactly once
-- Do not change any other content
-- Return only the modified HTML
+- Do NOT change any other content — only insert the <a href> tags
+- Preserve all CSS, brand colours, CTA block, expert quote unchanged
 
-Produce a JSON object:
-{
+Return JSON:
+{{
   "html": "...full HTML with links inserted...",
   "links_inserted": 5
-}"""
+}}"""
 
 
 def agent_link_inserter(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
-    html_art = ctx.html_article
-    ld = ctx.link_data
-
     links_text = "\n".join(
         f"- URL: {lnk.url} | Anchor: {lnk.anchor} | Section: {lnk.section}"
-        for lnk in ld.internal_links
+        for lnk in ctx.link_data.internal_links
     )
+    user = f"""Insert these internal links naturally into the HTML article:
 
-    user = f"""Insert these internal links into the HTML article:
-
-LINKS TO INSERT:
+LINKS:
 {links_text}
 
-HTML ARTICLE:
-{html_art.html}
-
-Insert each link naturally into the corresponding section."""
+HTML:
+{ctx.html_article.html}"""
     ctx.linked_html = _call_structured(client, SYSTEM_LINK_INSERTER, user, LinkedHTMLArticle)
     return ctx
 
 
 # ─── Agent 9: Final QA ────────────────────────────────────────────────────────
 
-SYSTEM_FINAL_QA = """You are a senior SEO quality assurance specialist.
-Perform a comprehensive check of the final article before publication.
+SYSTEM_FINAL_QA = f"""You are the senior QA editor for HotHeads Band agency (hot-head.ru).
+Perform a 9-point quality check on the final article before publication.
 
-Checklist to verify:
-1. H1 tag present and contains primary keyword
-2. At least 3 H2 tags present
-3. FAQ section present (min 3 Q&A pairs)
-4. Internal links present (min 2)
-5. Meta description not empty (check article intro as proxy)
-6. No duplicate H2 headings
-7. Word count ≥ 1500
-8. Primary keywords appear in first paragraph
-9. Article ends with a conclusion or call to action
-10. No broken HTML (no unclosed tags in visible content)
+{CONTENT_RULES}
 
-Produce a JSON object:
-{
+HOTHEAD BAND QA CHECKLIST (9 criteria — all must pass before publishing):
+1. All H2/H3 contain a search keyword (no generic headings)
+2. TOC is synchronised with real H2 headings (same text, correct anchors)
+3. Callout blocks only orange (.callout-warn) and grey (.callout-tip) — no purple/teal
+4. No mentions of Meta, Facebook, Instagram, Threads, WhatsApp
+5. Article has FAQ (min 5 Q&A) + comparison table {"+ decision matrix" if True else ""}
+6. Article has an expert quote from Алена Мумладзе
+7. CTA block is present with link to https://t.me/hotheads_band
+8. Responsive CSS: all three breakpoints (768/480/360px) are present in the <style>
+9. Date in article-meta is in format «Месяц YYYY» (e.g. «Март 2026») — not just the year
+
+If minor HTML issues are found — fix them in final_html.
+If critical content is missing (FAQ, CTA, expert quote) — add it.
+
+Return JSON:
+{{
   "checklist": [
-    {"check": "H1 tag present with primary keyword", "passed": true, "note": ""},
+    {{"check": "criterion description", "passed": true, "note": ""}},
     ...
   ],
   "overall_passed": true,
   "issues": [],
-  "final_html": "...the article HTML (unchanged if passed, or fixed if minor issues)...",
-  "summary": "One paragraph QA summary..."
-}"""
+  "final_html": "...publication-ready HTML...",
+  "summary": "One-paragraph QA summary."
+}}"""
 
 
 def agent_final_qa(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
     ka = ctx.keyword_analysis
-    linked = ctx.linked_html
+    user = f"""Run the 9-point HotHeads Band QA checklist on this article.
 
-    user = f"""Perform QA on this article.
-
+Topic: {ctx.row.main_keyword}
+Article type: {ctx.row.article_type}
 Primary keywords: {', '.join(ka.primary_keywords)}
-Expected internal links count: {ctx.link_data.links_inserted if ctx.linked_html else 0}
+Expected internal links: {ctx.link_data.links_inserted if ctx.linked_html else 0}
 
-ARTICLE HTML:
-{linked.html}
-
-Run all checklist items and return the QA report JSON."""
+HTML:
+{ctx.linked_html.html}"""
     ctx.qa_report = _call_structured(client, SYSTEM_FINAL_QA, user, QAReport)
     return ctx

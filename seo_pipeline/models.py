@@ -4,7 +4,7 @@ Every agent produces one of these models and passes it downstream.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -16,10 +16,17 @@ class KeywordRow(BaseModel):
     cluster_keywords: str          # comma-separated string from CSV
     search_intent: str             # информационный / коммерческий / навигационный
     page_type: str                 # статья / лендинг / категория etc.
+    article_type: Literal["seo", "geo"] = "seo"
+    # "seo" — стандартная SEO-статья для блога HotHeads Band
+    # "geo" — GEO/AEO-статья (сравнения, рейтинги, best-of) для AI-цитирования
 
     @property
     def cluster_list(self) -> List[str]:
         return [k.strip() for k in self.cluster_keywords.split(",") if k.strip()]
+
+    @property
+    def is_geo(self) -> bool:
+        return self.article_type == "geo"
 
 
 # ─── Stage 1 · Keyword Analyzer ───────────────────────────────────────────────
