@@ -87,6 +87,7 @@ def run_csv(
             cluster_keywords=str(series["cluster_keywords"]),
             search_intent=str(series["search_intent"]),
             page_type=str(series["page_type"]),
+            article_type=str(series["article_type"]) if "article_type" in series.index else "seo",
         )
         try:
             run_pipeline(row, out, sitemap_pages=sitemap_pages)

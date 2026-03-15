@@ -65,14 +65,23 @@ def _stream_call(client: anthropic.Anthropic, system: str, user: str) -> str:
 
 def _parse_json_response(raw: str) -> Dict[str, Any]:
     """Extract the first JSON object or array from the model output."""
-    raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
-    raw = re.sub(r"\s*```$", "", raw.strip(), flags=re.MULTILINE)
-    start = min(
-        (raw.find("{") if raw.find("{") != -1 else len(raw)),
-        (raw.find("[") if raw.find("[") != -1 else len(raw)),
-    )
-    raw = raw[start:]
-    return json.loads(raw)
+    # Strip outermost markdown code fence (first and last occurrence only)
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
+    raw = re.sub(r"\n?```\s*$", "", raw)
+    raw = raw.strip()
+
+    # Find the first JSON start character and parse exactly one value,
+    # ignoring any trailing text (e.g. Claude's post-JSON commentary).
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(raw):
+        if ch in ("{", "["):
+            try:
+                obj, _ = decoder.raw_decode(raw, i)
+                return obj
+            except json.JSONDecodeError:
+                continue
+    raise ValueError(f"No valid JSON found in model response. First 300 chars: {raw[:300]}")
 
 
 def _call_structured(
@@ -425,9 +434,10 @@ H2 headings: <h2 id="section-slug">Title with keyword</h2>
 
 Stats: <div class="stats-grid"><div class="stat-card"><span class="stat-number">X</span><span class="stat-label">label</span></div></div>
 
-Callouts (ONLY these two):
+Callouts (ONLY these three — no other variants):
 <div class="callout callout-warn"><strong>Title</strong>Text</div>
 <div class="callout callout-tip"><strong>Title</strong>Text</div>
+<div class="callout callout-info"><strong>Title</strong>Text</div>
 
 Expert quote (REQUIRED — Алена Мумладзе):
 <div class="expert-quote">
@@ -606,15 +616,15 @@ If minor HTML issues are found — fix them in final_html.
 If critical content is missing (FAQ, CTA, expert quote) — add it.
 
 Return JSON:
-{{{{
+{{
   "checklist": [
-    {{{{"check": "criterion description", "passed": true, "note": ""}}}}
+    {{"check": "criterion description", "passed": true, "note": ""}}
   ],
   "overall_passed": true,
   "issues": [],
   "final_html": "...publication-ready HTML...",
   "summary": "One-paragraph QA summary."
-}}}}"""
+}}"""
 
 
 def _build_qa_system(is_geo: bool) -> str:
@@ -639,14 +649,26 @@ def _build_qa_system(is_geo: bool) -> str:
 def agent_final_qa(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
     ka     = ctx.keyword_analysis
     system = _build_qa_system(ctx.row.is_geo)
+
+    # Prefer linked HTML (Agent 8), fall back to raw HTML (Agent 6)
+    if ctx.linked_html:
+        html_to_check   = ctx.linked_html.html
+        links_inserted  = ctx.linked_html.links_inserted
+    elif ctx.html_article:
+        html_to_check   = ctx.html_article.html
+        links_inserted  = 0
+    else:
+        html_to_check   = "(no HTML available)"
+        links_inserted  = 0
+
     user   = f"""Run the 9-point HotHeads Band QA checklist on this article.
 
 Topic: {ctx.row.main_keyword}
 Article type: {ctx.row.article_type}
 Primary keywords: {', '.join(ka.primary_keywords)}
-Internal links inserted: {ctx.linked_html.links_inserted if ctx.linked_html else 0}
+Internal links inserted: {links_inserted}
 
 HTML:
-{ctx.linked_html.html}"""
+{html_to_check}"""
     ctx.qa_report = _call_structured(client, system, user, QAReport)
     return ctx
