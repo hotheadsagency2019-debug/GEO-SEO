@@ -40,6 +40,7 @@ class KeywordAnalysis(BaseModel):
     secondary_keywords: List[str] = Field(description="Supporting keywords (5-15)")
     meta_description: str = Field(description="Meta description (up to 160 chars)")
     intent: str = Field(description="Refined search intent label")
+    article_tag: str = Field(description="Short category tag for article header (e.g. Контекстная реклама)")
 
 
 # ─── Stage 2 · LSI & Semantic Expansion ──────────────────────────────────────

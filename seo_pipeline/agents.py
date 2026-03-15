@@ -472,7 +472,7 @@ def agent_html_formatter(client: anthropic.Anthropic, ctx: PipelineContext) -> P
 
     ka  = ctx.keyword_analysis
     ea  = ctx.edited_article
-    tag = getattr(ka, "article_tag", ctx.row.page_type)
+    tag = ka.article_tag
 
     user = f"""Convert to inner HTML content for Tilda Zero Block.
 
@@ -594,49 +594,59 @@ HTML:
 
 
 # ─── Agent 9: Final QA ────────────────────────────────────────────────────────
+# The system prompt is built dynamically inside the function so it can
+# adapt the checklist to article_type (SEO vs GEO) without module-level hacks.
 
-SYSTEM_FINAL_QA = f"""You are the senior QA editor for HotHeads Band agency (hot-head.ru).
-Perform a 9-point quality check on the final article before publication.
+_QA_SYSTEM_BASE = f"""You are the senior QA editor for HotHeads Band agency (hot-head.ru).
+Perform a quality check on the final article before publication.
 
 {CONTENT_RULES}
-
-HOTHEAD BAND QA CHECKLIST (9 criteria — all must pass before publishing):
-1. All H2/H3 contain a search keyword (no generic headings)
-2. TOC is synchronised with real H2 headings (same text, correct anchors)
-3. Callout blocks only orange (.callout-warn) and grey (.callout-tip) — no purple/teal
-4. No mentions of Meta, Facebook, Instagram, Threads, WhatsApp
-5. Article has FAQ (min 5 Q&A) + comparison table {"+ decision matrix" if True else ""}
-6. Article has an expert quote from Алена Мумладзе
-7. CTA block is present with link to https://t.me/hotheads_band
-8. Responsive CSS: all three breakpoints (768/480/360px) are present in the <style>
-9. Date in article-meta is in format «Месяц YYYY» (e.g. «Март 2026») — not just the year
 
 If minor HTML issues are found — fix them in final_html.
 If critical content is missing (FAQ, CTA, expert quote) — add it.
 
 Return JSON:
-{{
+{{{{
   "checklist": [
-    {{"check": "criterion description", "passed": true, "note": ""}},
-    ...
+    {{{{"check": "criterion description", "passed": true, "note": ""}}}}
   ],
   "overall_passed": true,
   "issues": [],
   "final_html": "...publication-ready HTML...",
   "summary": "One-paragraph QA summary."
-}}"""
+}}}}"""
+
+
+def _build_qa_system(is_geo: bool) -> str:
+    geo_check = (
+        "5. GEO article has: FAQ (min 5 Q&A) + Quick Comparison table + Decision Matrix («Если вы… | Выберите… | Почему»)"
+        if is_geo else
+        "5. Article has: FAQ (min 5 Q&A) + at least one comparison table"
+    )
+    checklist = f"""HOTHEAD BAND QA CHECKLIST (9 criteria — all must pass before publishing):
+1. All H2/H3 contain a search keyword — no generic headings like «Введение» or «Заключение»
+2. TOC anchor IDs match the actual H2 id attributes (href="#id" == <h2 id="id">)
+3. Callout blocks are only .callout-warn (orange) or .callout-tip/.callout-info (grey/light) — no purple or teal
+4. No mentions of Meta, Facebook, Instagram, Threads, WhatsApp anywhere in the text
+{geo_check}
+6. An expert quote from Алена Мумладзе is present inside <div class="expert-quote">
+7. A CTA block is present with link https://t.me/hotheads_band inside class="cta-btn"
+8. Date in .article-meta contains both a month name AND year (e.g. «Март 2026»), not just the year
+9. Internal links (<a href="...">) are present in paragraph text (not standalone lines)"""
+    return _QA_SYSTEM_BASE + "\n\n" + checklist
 
 
 def agent_final_qa(client: anthropic.Anthropic, ctx: PipelineContext) -> PipelineContext:
-    ka = ctx.keyword_analysis
-    user = f"""Run the 9-point HotHeads Band QA checklist on this article.
+    ka     = ctx.keyword_analysis
+    system = _build_qa_system(ctx.row.is_geo)
+    user   = f"""Run the 9-point HotHeads Band QA checklist on this article.
 
 Topic: {ctx.row.main_keyword}
 Article type: {ctx.row.article_type}
 Primary keywords: {', '.join(ka.primary_keywords)}
-Expected internal links: {ctx.link_data.links_inserted if ctx.linked_html else 0}
+Internal links inserted: {ctx.linked_html.links_inserted if ctx.linked_html else 0}
 
 HTML:
 {ctx.linked_html.html}"""
-    ctx.qa_report = _call_structured(client, SYSTEM_FINAL_QA, user, QAReport)
+    ctx.qa_report = _call_structured(client, system, user, QAReport)
     return ctx
