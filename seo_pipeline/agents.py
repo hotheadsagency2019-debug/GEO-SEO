@@ -26,8 +26,10 @@ from .brand_config import (
     HTML_OPEN,
 )
 from .models import (
+    CaseStudy,
     DraftArticle,
     EditedArticle,
+    ExampleItem,
     FactData,
     FactItem,
     HTMLArticle,
@@ -36,11 +38,12 @@ from .models import (
     LinkData,
     LinkedHTMLArticle,
     LSIData,
+    MatchedCase,
+    MatchedCases,
     PipelineContext,
     QAChecklistItem,
     QAReport,
     StatItem,
-    ExampleItem,
 )
 
 MODEL = "claude-opus-4-6"
@@ -98,6 +101,72 @@ def _call_structured(
     raw = _stream_call(client, system_with_json, user)
     data = _parse_json_response(raw)
     return model_cls.model_validate(data)
+
+
+# ─── Agent 0: Cases Matcher ───────────────────────────────────────────────────
+# Runs only when a Google Sheets cases list is provided.
+# Selects the 3-5 most topically relevant case studies so they can be
+# mentioned naturally in the article (Agent 4) and linked internally (Agent 7).
+
+SYSTEM_CASES_MATCHER = f"""You are an SEO strategist for HotHeads Band agency (hot-head.ru).
+Given a new article topic and a full list of published agency case studies,
+select the 3-5 most relevant cases to mention and link in the article.
+
+{CONTENT_RULES}
+
+Selection criteria (in order of priority):
+1. Topical match — the case covers the same service, channel, or industry as the article
+2. Problem-solution fit — the case demonstrates solving the problem the article discusses
+3. Authority signal — the case proves HotHeads Band expertise in the article's topic
+
+For each selected case, write a natural Russian anchor text that could appear
+inside a sentence of the article (not the page title, not a call-to-action).
+
+Return JSON:
+{{
+  "cases": [
+    {{
+      "url": "/keisi/some-case/",
+      "title": "Case title",
+      "description": "Brief case description",
+      "result": "Key result / metric",
+      "suggested_anchor": "natural anchor text in Russian",
+      "relevance_reason": "Why this case is relevant to the article topic"
+    }}
+  ],
+  "reasoning": "Overall reasoning for the selection"
+}}"""
+
+
+def agent_cases_matcher(
+    client: anthropic.Anthropic,
+    ctx: PipelineContext,
+    all_cases: list,          # List[CaseStudy] — typed loosely to avoid circular import
+) -> PipelineContext:
+    row = ctx.row
+
+    cases_text = "\n".join(
+        f"- URL: {c.url}\n"
+        f"  Title: {c.title}\n"
+        f"  Industry: {c.industry or '—'}\n"
+        f"  Services: {c.services or '—'}\n"
+        f"  Result: {c.result or '—'}\n"
+        f"  Keywords: {c.keywords or '—'}\n"
+        f"  Description: {c.description or '—'}"
+        for c in all_cases
+    )
+
+    user = f"""New article topic: {row.main_keyword}
+Article type: {row.article_type}
+Cluster keywords: {row.cluster_keywords}
+Search intent: {row.search_intent}
+
+PUBLISHED CASE STUDIES ({len(all_cases)} total):
+{cases_text}
+
+Select 3-5 most relevant cases. Write natural Russian anchor text for each."""
+    ctx.matched_cases = _call_structured(client, SYSTEM_CASES_MATCHER, user, MatchedCases)
+    return ctx
 
 
 # ─── Agent 1: Keyword Analyzer ────────────────────────────────────────────────
@@ -286,6 +355,19 @@ def agent_article_writer(client: anthropic.Anthropic, ctx: PipelineContext) -> P
 
     system = SYSTEM_ARTICLE_WRITER_GEO if ctx.row.is_geo else SYSTEM_ARTICLE_WRITER_SEO
 
+    # Build cases block — only if Agent 0 ran and returned results
+    cases_block = ""
+    if ctx.matched_cases and ctx.matched_cases.cases:
+        lines = "\n".join(
+            f"- «{c.title}» ({c.url})"
+            + (f" — {c.description}" if c.description else "")
+            + (f" Результат: {c.result}" if c.result else "")
+            for c in ctx.matched_cases.cases
+        )
+        cases_block = (
+            f"\n\nКЕЙСЫ АГЕНТСТВА (упомяни 1-2 органично в тексте как примеры из практики):\n{lines}"
+        )
+
     user = f"""Write {"a GEO/AEO" if ctx.row.is_geo else "an SEO"} article.
 
 H1: {ka.h1}
@@ -305,7 +387,7 @@ Statistics:
 
 Examples:
 {examples_text}
-
+{cases_block}
 {"PRODUCTS TO COMPARE: " + ctx.row.cluster_keywords if ctx.row.is_geo else ""}
 
 Expert quote: include a realistic quote from Алена Мумладзе (основательница HotHeads Band) relevant to the topic."""
@@ -536,33 +618,46 @@ def agent_internal_linking(
 ) -> PipelineContext:
     ka = ctx.keyword_analysis
 
-    if not sitemap_pages:
-        sitemap_pages = [
-            {"url": "/blog/seo-basics/",              "title": "Основы SEO: полное руководство"},
-            {"url": "/blog/content-marketing/",       "title": "Контент-маркетинг для бизнеса"},
-            {"url": "/blog/yandex-direct/",           "title": "Яндекс Директ: настройка и оптимизация"},
-            {"url": "/blog/landing-page-conversion/", "title": "Лендинг: как повысить конверсию"},
-            {"url": "/blog/keyword-research/",        "title": "Сбор семантики: инструменты и методы"},
-            {"url": "/blog/technical-seo/",           "title": "Технический SEO-аудит сайта"},
-            {"url": "/blog/backlinks/",               "title": "Ссылочная масса: как строить ссылки"},
-            {"url": "/blog/ai-tools-marketing/",      "title": "ИИ-инструменты для маркетолога"},
-            {"url": "/blog/telegram-marketing/",      "title": "Маркетинг в Telegram: каналы и боты"},
-            {"url": "/blog/analytics-setup/",         "title": "Настройка аналитики: GA4 и Яндекс Метрика"},
-            {"url": "/keisi/",                        "title": "Кейсы агентства HotHeads Band"},
-        ]
+    # Build the effective page list
+    effective_pages = list(sitemap_pages) if sitemap_pages else [
+        {"url": "/blog/seo-basics/",              "title": "Основы SEO: полное руководство"},
+        {"url": "/blog/content-marketing/",       "title": "Контент-маркетинг для бизнеса"},
+        {"url": "/blog/yandex-direct/",           "title": "Яндекс Директ: настройка и оптимизация"},
+        {"url": "/blog/landing-page-conversion/", "title": "Лендинг: как повысить конверсию"},
+        {"url": "/blog/keyword-research/",        "title": "Сбор семантики: инструменты и методы"},
+        {"url": "/blog/technical-seo/",           "title": "Технический SEO-аудит сайта"},
+        {"url": "/blog/backlinks/",               "title": "Ссылочная масса: как строить ссылки"},
+        {"url": "/blog/ai-tools-marketing/",      "title": "ИИ-инструменты для маркетолога"},
+        {"url": "/blog/telegram-marketing/",      "title": "Маркетинг в Telegram: каналы и боты"},
+        {"url": "/blog/analytics-setup/",         "title": "Настройка аналитики: GA4 и Яндекс Метрика"},
+        {"url": "/keisi/",                        "title": "Кейсы агентства HotHeads Band"},
+    ]
 
-    pages_text = "\n".join(f"- URL: {p['url']} | Title: {p['title']}" for p in sitemap_pages)
+    # Prepend matched case studies (Agent 0 output) as priority link targets
+    cases_hint = ""
+    if ctx.matched_cases and ctx.matched_cases.cases:
+        for mc in ctx.matched_cases.cases:
+            # Avoid duplicates if the case is already in the sitemap
+            if not any(p["url"] == mc.url for p in effective_pages):
+                effective_pages.insert(0, {"url": mc.url, "title": mc.title})
+        anchors = "\n".join(
+            f"  {mc.url} → suggested anchor: «{mc.suggested_anchor}»"
+            for mc in ctx.matched_cases.cases
+        )
+        cases_hint = f"\nPRIORITY CASE STUDIES (prefer linking to these, use the suggested anchors):\n{anchors}\n"
+
+    pages_text = "\n".join(f"- URL: {p['url']} | Title: {p['title']}" for p in effective_pages)
 
     user = f"""New article: {ctx.row.main_keyword}
 Article H1: {ka.h1}
 H2 sections: {', '.join(ka.h2_sections)}
-
+{cases_hint}
 Site pages:
 {pages_text}
 
-Find 4-8 most relevant internal links. Prefer linking to /keisi/ when relevant (shows agency expertise)."""
+Find 4-8 most relevant internal links. Case study pages are high-priority — linking to them demonstrates agency expertise."""
     ctx.link_data = _call_structured(client, SYSTEM_INTERNAL_LINKER, user, LinkData)
-    ctx.link_data.sitemap_pages_analyzed = len(sitemap_pages)
+    ctx.link_data.sitemap_pages_analyzed = len(effective_pages)
     return ctx
 
 

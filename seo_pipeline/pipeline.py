@@ -19,6 +19,7 @@ from rich.table import Table
 
 from .agents import (
     agent_article_writer,
+    agent_cases_matcher,
     agent_fact_collector,
     agent_final_qa,
     agent_html_formatter,
@@ -28,13 +29,14 @@ from .agents import (
     agent_lsi_expansion,
     agent_seo_editor,
 )
-from .models import KeywordRow, PipelineContext
+from .models import CaseStudy, KeywordRow, PipelineContext
 
 console = Console()
 
 # ─── Pipeline step registry ───────────────────────────────────────────────────
 
 PIPELINE_STEPS: List[tuple[str, str, Callable]] = [
+    ("0", "Cases Matcher",               agent_cases_matcher),
     ("1", "Keyword Analyzer",            agent_keyword_analyzer),
     ("2", "LSI & Semantic Expansion",    agent_lsi_expansion),
     ("3", "Fact Collector",              agent_fact_collector),
@@ -53,6 +55,7 @@ def run_pipeline(
     row: KeywordRow,
     output_dir: Path,
     sitemap_pages: Optional[list] = None,
+    all_cases: Optional[list] = None,   # List[CaseStudy] from Google Sheets
     verbose: bool = False,
 ) -> PipelineContext:
     """
@@ -81,7 +84,16 @@ def run_pipeline(
             )
             start = time.time()
             try:
-                if step_fn is agent_internal_linking:
+                if step_fn is agent_cases_matcher:
+                    if not all_cases:
+                        # No cases sheet configured — skip this agent silently
+                        progress.remove_task(task)
+                        console.print(
+                            f"  [dim]○ Agent 0: Cases Matcher  (skipped — no --cases-sheet provided)[/dim]"
+                        )
+                        continue
+                    ctx = step_fn(client, ctx, all_cases)
+                elif step_fn is agent_internal_linking:
                     ctx = step_fn(client, ctx, sitemap_pages)
                 else:
                     ctx = step_fn(client, ctx)
@@ -109,6 +121,7 @@ def run_pipeline(
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 _STEP_FIELD_MAP = {
+    "0": "matched_cases",
     "1": "keyword_analysis",
     "2": "lsi_data",
     "3": "fact_data",

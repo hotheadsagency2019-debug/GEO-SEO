@@ -8,6 +8,34 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+# ─── Stage 0 · Cases Matcher ──────────────────────────────────────────────────
+
+class CaseStudy(BaseModel):
+    """One case study row loaded from Google Sheets."""
+    url: str
+    title: str
+    description: str = ""
+    industry: str = ""
+    services: str = ""
+    result: str = ""
+    keywords: str = ""
+
+
+class MatchedCase(BaseModel):
+    url: str
+    title: str
+    description: str = ""
+    result: str = ""
+    suggested_anchor: str = Field(description="Natural Russian anchor text for this internal link")
+    relevance_reason: str = ""
+
+
+class MatchedCases(BaseModel):
+    """Output of Agent 0: case studies selected as relevant for this article."""
+    cases: List[MatchedCase]
+    reasoning: str = ""
+
+
 # ─── Input ────────────────────────────────────────────────────────────────────
 
 class KeywordRow(BaseModel):
@@ -150,6 +178,7 @@ class QAReport(BaseModel):
 class PipelineContext(BaseModel):
     """Accumulated state passed through the entire pipeline."""
     row: KeywordRow
+    matched_cases: Optional[MatchedCases] = None   # Agent 0
     keyword_analysis: Optional[KeywordAnalysis] = None
     lsi_data: Optional[LSIData] = None
     fact_data: Optional[FactData] = None
