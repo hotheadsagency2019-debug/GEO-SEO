@@ -57,7 +57,6 @@ def _stream_call(client: anthropic.Anthropic, system: str, user: str, max_tokens
     with client.messages.stream(
         model=MODEL,
         max_tokens=max_tokens,
-        thinking={"type": "adaptive"},
         system=system,
         messages=[{"role": "user", "content": user}],
     ) as stream:
@@ -466,7 +465,7 @@ User questions for FAQ: {chr(10).join(lsi.user_questions)}
 
 DRAFT:
 {da.markdown}"""
-    ctx.edited_article = _call_structured(client, system, user, EditedArticle)
+    ctx.edited_article = _call_structured(client, system, user, EditedArticle, max_tokens=16000)
     return ctx
 
 
@@ -584,7 +583,7 @@ Generate ONLY the inner HTML content. No <style>, no wrappers.
 Use ONLY the pre-defined CSS classes. The <style> block with all CSS is added automatically."""
 
     # Ask Claude for inner content only
-    inner = _call_structured(client, SYSTEM_HTML_FORMATTER, user, HTMLArticle)
+    inner = _call_structured(client, SYSTEM_HTML_FORMATTER, user, HTMLArticle, max_tokens=16000)
 
     # Inject the canonical CSS wrapper — never trust Claude's CSS output
     full_html = HTML_OPEN + inner.html + HTML_CLOSE
@@ -698,7 +697,7 @@ LINKS:
 
 HTML:
 {ctx.html_article.html}"""
-    ctx.linked_html = _call_structured(client, SYSTEM_LINK_INSERTER, user, LinkedHTMLArticle)
+    ctx.linked_html = _call_structured(client, SYSTEM_LINK_INSERTER, user, LinkedHTMLArticle, max_tokens=16000)
     return ctx
 
 
@@ -769,5 +768,5 @@ Internal links inserted: {links_inserted}
 
 HTML:
 {html_to_check}"""
-    ctx.qa_report = _call_structured(client, system, user, QAReport)
+    ctx.qa_report = _call_structured(client, system, user, QAReport, max_tokens=16000)
     return ctx
