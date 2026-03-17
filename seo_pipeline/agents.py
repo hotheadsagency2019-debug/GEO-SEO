@@ -86,6 +86,16 @@ def _parse_json_response(raw: str) -> Dict[str, Any]:
     raise ValueError(f"No valid JSON found in model response. First 300 chars: {raw[:300]}")
 
 
+def _inner_html(full_html: str) -> str:
+    """Strip the CSS wrapper (HTML_OPEN/HTML_CLOSE) — return only inner content."""
+    inner = full_html
+    if inner.startswith(HTML_OPEN):
+        inner = inner[len(HTML_OPEN):]
+    if inner.endswith(HTML_CLOSE):
+        inner = inner[:-len(HTML_CLOSE)]
+    return inner
+
+
 def _call_structured(
     client: anthropic.Anthropic,
     system: str,
@@ -690,14 +700,21 @@ def agent_link_inserter(client: anthropic.Anthropic, ctx: PipelineContext) -> Pi
         f"- URL: {lnk.url} | Anchor: {lnk.anchor} | Section: {lnk.section}"
         for lnk in ctx.link_data.internal_links
     )
+    # Strip the CSS wrapper — model only needs to process inner HTML (~4000 fewer tokens)
+    inner = _inner_html(ctx.html_article.html)
     user = f"""Insert these internal links naturally into the HTML article:
 
 LINKS:
 {links_text}
 
 HTML:
-{ctx.html_article.html}"""
-    ctx.linked_html = _call_structured(client, SYSTEM_LINK_INSERTER, user, LinkedHTMLArticle, max_tokens=16000)
+{inner}"""
+    result = _call_structured(client, SYSTEM_LINK_INSERTER, user, LinkedHTMLArticle, max_tokens=16000)
+    # Re-wrap with canonical CSS
+    ctx.linked_html = LinkedHTMLArticle(
+        html=HTML_OPEN + result.html + HTML_CLOSE,
+        links_inserted=result.links_inserted,
+    )
     return ctx
 
 
@@ -750,16 +767,19 @@ def agent_final_qa(client: anthropic.Anthropic, ctx: PipelineContext) -> Pipelin
 
     # Prefer linked HTML (Agent 8), fall back to raw HTML (Agent 6)
     if ctx.linked_html:
-        html_to_check   = ctx.linked_html.html
-        links_inserted  = ctx.linked_html.links_inserted
+        full_html      = ctx.linked_html.html
+        links_inserted = ctx.linked_html.links_inserted
     elif ctx.html_article:
-        html_to_check   = ctx.html_article.html
-        links_inserted  = 0
+        full_html      = ctx.html_article.html
+        links_inserted = 0
     else:
-        html_to_check   = "(no HTML available)"
-        links_inserted  = 0
+        full_html      = ""
+        links_inserted = 0
 
-    user   = f"""Run the 9-point HotHeads Band QA checklist on this article.
+    # Strip CSS wrapper — model only checks/fixes inner HTML (~4000 fewer tokens)
+    inner_to_check = _inner_html(full_html) if full_html else "(no HTML available)"
+
+    user = f"""Run the 9-point HotHeads Band QA checklist on this article.
 
 Topic: {ctx.row.main_keyword}
 Article type: {ctx.row.article_type}
@@ -767,6 +787,10 @@ Primary keywords: {', '.join(ka.primary_keywords)}
 Internal links inserted: {links_inserted}
 
 HTML:
-{html_to_check}"""
-    ctx.qa_report = _call_structured(client, system, user, QAReport, max_tokens=16000)
+{inner_to_check}"""
+    result = _call_structured(client, system, user, QAReport, max_tokens=16000)
+    # Re-wrap final_html with canonical CSS before storing
+    ctx.qa_report = result.model_copy(
+        update={"final_html": HTML_OPEN + result.final_html + HTML_CLOSE}
+    )
     return ctx
