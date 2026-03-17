@@ -32,8 +32,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
-
 import pandas as pd
 import typer
 from dotenv import load_dotenv
@@ -66,19 +64,19 @@ def _load_sitemap(path: str | None) -> list | None:
         return json.load(f)
 
 
-def _load_cases(sheet_id_or_url: str | None, credentials: str | None) -> list | None:
-    """Load case studies from Google Sheets. Returns None if not configured."""
+def _load_cases(sheet_id_or_url: str | None) -> list | None:
+    """Load case studies from a public Google Sheet. Returns None if not configured."""
     sid = sheet_id_or_url or os.getenv("CASES_SHEET_ID")
     if not sid:
         return None
     try:
         from seo_pipeline.cases_loader import load_cases
-        cases = load_cases(sid, credentials)
-        console.print(f"[green]✓[/green] Loaded {len(cases)} case studies from Google Sheets")
+        cases = load_cases(sid)
+        console.print(f"[green]✓[/green] Загружено {len(cases)} кейсов из Google Sheets")
         return cases
     except Exception as exc:
-        console.print(f"[yellow]Warning:[/yellow] Could not load cases from Sheets: {exc}\n"
-                      "  Agent 0 (Cases Matcher) will be skipped.")
+        console.print(f"[yellow]Warning:[/yellow] Не удалось загрузить кейсы из Sheets: {exc}\n"
+                      "  Agent 0 (Cases Matcher) будет пропущен.")
         return None
 
 
@@ -90,11 +88,7 @@ def run_csv(
     row_index: int = typer.Option(None, "--row", help="Process only this row index (0-based)"),
     cases_sheet: str = typer.Option(
         None, "--cases-sheet",
-        help="Google Sheet ID or URL with agency case studies (enables Agent 0)"
-    ),
-    credentials: str = typer.Option(
-        None, "--credentials",
-        help="Path to Google service account JSON key (or set GOOGLE_APPLICATION_CREDENTIALS)"
+        help="ID или ссылка на публичный Google Sheet с кейсами агентства (включает Agent 0)"
     ),
 ):
     """Process all keyword rows from a CSV file."""
@@ -112,7 +106,7 @@ def run_csv(
         raise typer.Exit(1)
 
     sitemap_pages = _load_sitemap(sitemap)
-    all_cases    = _load_cases(cases_sheet, credentials)
+    all_cases    = _load_cases(cases_sheet)
     out          = Path(output_dir)
 
     rows = [df.iloc[row_index]] if row_index is not None else [df.iloc[i] for i in range(len(df))]
@@ -145,11 +139,7 @@ def run_single(
     sitemap: str = typer.Option(None, "--sitemap", help="Path to sitemap JSON file"),
     cases_sheet: str = typer.Option(
         None, "--cases-sheet",
-        help="Google Sheet ID or URL with agency case studies (enables Agent 0)"
-    ),
-    credentials: str = typer.Option(
-        None, "--credentials",
-        help="Path to Google service account JSON key (or set GOOGLE_APPLICATION_CREDENTIALS)"
+        help="ID или ссылка на публичный Google Sheet с кейсами агентства (включает Agent 0)"
     ),
 ):
     """Process a single keyword row provided inline."""
@@ -162,7 +152,7 @@ def run_single(
         article_type=article_type,
     )
     sitemap_pages = _load_sitemap(sitemap)
-    all_cases    = _load_cases(cases_sheet, credentials)
+    all_cases    = _load_cases(cases_sheet)
     out          = Path(output_dir)
     run_pipeline(row, out, sitemap_pages=sitemap_pages, all_cases=all_cases)
     console.print(f"\n[bold green]Done! Artefacts saved to: {out.resolve()}[/bold green]")
