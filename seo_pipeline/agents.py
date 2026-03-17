@@ -532,13 +532,16 @@ Tables: <div class="table-wrap"><table><thead><tr><th>Col</th></tr></thead><tbod
 FAQ (REQUIRED — min 5 items):
 <div class="faq-item"><p class="faq-q">Question?</p><p class="faq-a">Answer.</p></div>
 
-CTA (REQUIRED at the end):
+CTA (REQUIRED at the end — ALWAYS include BOTH buttons):
 <div class="cta-block">
   <div class="cta-text">
     <p class="cta-title">Title</p>
     <p class="cta-body">Description.</p>
   </div>
-  <a href="https://t.me/hotheads_band" target="_blank" class="cta-btn">Обсудить проект →</a>
+  <div class="cta-buttons">
+    <a href="https://t.me/hotheads_band" target="_blank" class="cta-btn">Написать в Telegram →</a>
+    <a href="https://vk.me/hotheads_band" target="_blank" class="cta-btn">Написать ВКонтакте →</a>
+  </div>
 </div>
 
 Footer: <footer class="article-footer">…</footer>
@@ -735,7 +738,7 @@ def _build_qa_system(is_geo: bool) -> str:
 4. No mentions of Meta, Facebook, Instagram, Threads, WhatsApp anywhere in the text
 {geo_check}
 6. An expert quote from Алена Мумладзе is present inside <div class="expert-quote">
-7. A CTA block is present with link https://t.me/hotheads_band inside class="cta-btn"
+7. CTA block has TWO buttons: https://t.me/hotheads_band AND https://vk.me/hotheads_band, both inside class="cta-btn"
 8. Date in .article-meta contains both a month name AND year (e.g. «Март 2026»), not just the year
 9. Internal links (<a href="...">) are present in paragraph text (not standalone lines)"""
     return _QA_SYSTEM_BASE + "\n\n" + checklist

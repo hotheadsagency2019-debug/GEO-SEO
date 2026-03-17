@@ -330,6 +330,7 @@ BRAND_CSS = """\
   position: relative;
 }
 .hu-article .cta-btn:hover { background: rgba(255,255,255,.15); transform: translateY(-1px); }
+.hu-article .cta-buttons { display: flex; gap: 12px; flex-wrap: wrap; }
 
 /* ── Footer ── */
 .hu-article .article-footer { margin-top: 60px; padding-top: 32px; border-top: 2px solid #f0f0f5; font-size: 13px; color: #888; }
@@ -434,7 +435,7 @@ FAQ:        .faq-item > .faq-q + .faq-a
 Кейсы:      .cases-grid > a.case-card-link > .case-header + .case-duration + .case-results + p.case-desc
 Прогноз:    .forecast-grid > .forecast-card > h4 + p
 Шаги:       ol.step-list > li
-CTA:        .cta-block > .cta-text(.cta-title + .cta-body) + a.cta-btn
+CTA:        .cta-block > .cta-text(.cta-title + .cta-body) + .cta-buttons > a.cta-btn (×2: Telegram + VK)
 Футер:      .article-footer
 """.strip()
 
@@ -445,7 +446,7 @@ CONTENT_RULES = """
 2. Callout-блоки: .callout-tip (серый) | .callout-warn (оранжевый) | .callout-info (оранжевый светлый).
    Запрещены фиолетовые, бирюзовые и любые другие цвета callout.
 3. Цитата эксперта: ОБЯЗАТЕЛЬНО включить цитату Алены Мумладзе — основательницы HotHeads Band.
-4. CTA-блок: ОБЯЗАТЕЛЬНО в конце, ссылка → https://t.me/hotheads_band.
+4. CTA-блок: ОБЯЗАТЕЛЬНО в конце, две кнопки: Telegram (https://t.me/hotheads_band) и ВКонтакте (https://vk.me/hotheads_band).
 5. FAQ: минимум 5 вопросов и ответов.
 6. SEO-заголовки: каждый H2/H3 ДОЛЖЕН содержать поисковый ключ.
    ❌ «Введение» → ✅ «Введение в Telegram Ads 2026: как это работает»
