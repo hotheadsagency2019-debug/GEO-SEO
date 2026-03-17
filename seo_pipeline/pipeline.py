@@ -57,6 +57,7 @@ def run_pipeline(
     sitemap_pages: Optional[list] = None,
     all_cases: Optional[list] = None,   # List[CaseStudy] from Google Sheets
     verbose: bool = False,
+    progress_callback: Optional[Callable[[str, str, str], None]] = None,
 ) -> PipelineContext:
     """
     Run the full 9-agent pipeline for a single keyword row.
@@ -83,6 +84,8 @@ def run_pipeline(
                 f"  [yellow]Agent {step_num}[/yellow]: {step_name}", total=None
             )
             start = time.time()
+            if progress_callback:
+                progress_callback(step_num, step_name, "running")
             try:
                 if step_fn is agent_cases_matcher:
                     if not all_cases:
@@ -91,6 +94,8 @@ def run_pipeline(
                         console.print(
                             f"  [dim]○ Agent 0: Cases Matcher  (skipped — no --cases-sheet provided)[/dim]"
                         )
+                        if progress_callback:
+                            progress_callback(step_num, step_name, "skipped")
                         continue
                     ctx = step_fn(client, ctx, all_cases)
                 elif step_fn is agent_internal_linking:
@@ -100,6 +105,8 @@ def run_pipeline(
             except Exception as exc:
                 progress.stop()
                 console.print(f"[red]✗ Agent {step_num} ({step_name}) failed: {exc}[/red]")
+                if progress_callback:
+                    progress_callback(step_num, step_name, "error")
                 raise
             elapsed = time.time() - start
             progress.remove_task(task)
@@ -107,6 +114,8 @@ def run_pipeline(
                 f"  [green]✓[/green] Agent {step_num}: {step_name}  "
                 f"[dim]({elapsed:.1f}s)[/dim]"
             )
+            if progress_callback:
+                progress_callback(step_num, step_name, "done")
 
             # Save per-step artefact
             _save_step_artefact(ctx, step_num, step_name, row_dir)
