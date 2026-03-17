@@ -51,12 +51,12 @@ T = TypeVar("T", bound=BaseModel)
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def _stream_call(client: anthropic.Anthropic, system: str, user: str) -> str:
+def _stream_call(client: anthropic.Anthropic, system: str, user: str, max_tokens: int = 8192) -> str:
     """Stream a Claude response and return the full text."""
     full_text = ""
     with client.messages.stream(
         model=MODEL,
-        max_tokens=8192,
+        max_tokens=max_tokens,
         thinking={"type": "adaptive"},
         system=system,
         messages=[{"role": "user", "content": user}],
@@ -92,13 +92,14 @@ def _call_structured(
     system: str,
     user: str,
     model_cls: Type[T],
+    max_tokens: int = 8192,
 ) -> T:
     system_with_json = (
         system
         + "\n\nIMPORTANT: Your entire response MUST be valid JSON matching the schema "
         "described. Do not add any text before or after the JSON object."
     )
-    raw = _stream_call(client, system_with_json, user)
+    raw = _stream_call(client, system_with_json, user, max_tokens=max_tokens)
     data = _parse_json_response(raw)
     return model_cls.model_validate(data)
 
@@ -391,7 +392,7 @@ Examples:
 {"PRODUCTS TO COMPARE: " + ctx.row.cluster_keywords if ctx.row.is_geo else ""}
 
 Expert quote: include a realistic quote from Алена Мумладзе (основательница HotHeads Band) relevant to the topic."""
-    ctx.draft_article = _call_structured(client, system, user, DraftArticle)
+    ctx.draft_article = _call_structured(client, system, user, DraftArticle, max_tokens=16000)
     return ctx
 
 
