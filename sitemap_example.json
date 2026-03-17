@@ -1,0 +1,17 @@
+[
+  {"url": "/blog/seo-basics/", "title": "Основы SEO: полное руководство"},
+  {"url": "/blog/content-marketing/", "title": "Контент-маркетинг для бизнеса"},
+  {"url": "/blog/google-ads-guide/", "title": "Google Ads: пошаговый гайд"},
+  {"url": "/blog/yandex-direct/", "title": "Яндекс Директ: настройка и оптимизация"},
+  {"url": "/blog/landing-page-conversion/", "title": "Лендинг: как повысить конверсию"},
+  {"url": "/blog/keyword-research/", "title": "Сбор семантики: инструменты и методы"},
+  {"url": "/blog/technical-seo/", "title": "Технический SEO-аудит сайта"},
+  {"url": "/blog/backlinks/", "title": "Ссылочная масса: как строить ссылки"},
+  {"url": "/blog/ai-tools-marketing/", "title": "ИИ-инструменты для маркетолога"},
+  {"url": "/blog/social-media-ads/", "title": "Реклама в соцсетях: Facebook и ВКонтакте"},
+  {"url": "/blog/email-marketing/", "title": "Email-маркетинг: стратегия и инструменты"},
+  {"url": "/blog/conversion-optimization/", "title": "CRO: оптимизация конверсии сайта"},
+  {"url": "/blog/analytics-setup/", "title": "Настройка аналитики: GA4 и Яндекс Метрика"},
+  {"url": "/blog/copywriting/", "title": "Копирайтинг для продаж: правила и приёмы"},
+  {"url": "/blog/telegram-marketing/", "title": "Маркетинг в Telegram: каналы и боты"}
+]
