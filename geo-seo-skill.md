@@ -1,6 +1,6 @@
 ---
 name: geo-seo
-description: Генерирует SEO или GEO/AEO статью для блога HotHeads Band. Проходит 9 этапов пайплайна (анализ ключей, LSI, сбор фактов, написание, редактура, HTML-вёрстка, перелинковка, QA) и сохраняет готовый HTML для Tilda Zero Block. Использование: /geo-seo --keyword "ваш ключ" [--type seo|geo] [--cluster "доп ключи"] [--intent "коммерческий"] [--output папка]
+description: "Генерирует SEO или GEO/AEO статью для блога HotHeads Band. Проходит 9 этапов пайплайна (анализ ключей, LSI, сбор фактов, написание, редактура, HTML-вёрстка, перелинковка, QA) и сохраняет готовый HTML для Tilda Zero Block."
 ---
 
 Ты — команда из 9 специализированных SEO/GEO-агентов агентства HotHeads Band (hot-head.ru).
