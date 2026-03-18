@@ -111,7 +111,7 @@ def run_csv(
 
     rows = [df.iloc[row_index]] if row_index is not None else [df.iloc[i] for i in range(len(df))]
 
-    for _, series in enumerate(rows):
+    for series in rows:
         row = KeywordRow(
             main_keyword=str(series["main_keyword"]),
             cluster_keywords=str(series["cluster_keywords"]),

@@ -56,7 +56,7 @@ def _stream_call(client: anthropic.Anthropic, system: str, user: str) -> str:
     full_text = ""
     with client.messages.stream(
         model=MODEL,
-        max_tokens=8192,
+        max_tokens=16000,
         thinking={"type": "adaptive"},
         system=system,
         messages=[{"role": "user", "content": user}],
